@@ -80,6 +80,6 @@ bokuju_parent_control2.lua
 - 本ReadmeはCursor GPT5に書かせたものを私が加筆修正したものです。
 - 参考: rikky氏のAviUtl向け既存実装を参考にもとに、CursorとGPT5を用いてAviUtl2 の API 仕様へ移植しています
 
-不具合・要望は Issue へお気軽にお寄せください。
+不具合・要望は ログを添えてIssue にお願いします。
 
 
