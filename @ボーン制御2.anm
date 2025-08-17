@@ -1,0 +1,349 @@
+@P2(Parent)
+--track0:ParentId,1,100,1,1
+--track1:HideSelf,0,1,0,1
+--check0:DebugDisp,0
+-- Parent registration: stores current absolute transform to r2_parent_info
+require("bokuju_parent_control2")
+local num = math.ceil(obj.track0)
+
+-- robust getter helpers (AviUtl2 may rename properties)
+local function getv(name)
+	local ok, v = pcall(obj.getvalue, name)
+	if ok and type(v) == "number" then return v end
+	return nil
+end
+local function pick(keys, fallback)
+	for i = 1, #keys do
+		local v = getv(keys[i])
+		if type(v) == "number" then return v end
+	end
+	return fallback
+end
+local function pickprop(props, fallback)
+	for i = 1, #props do
+		local ok, v = pcall(function() return obj[props[i]] end)
+		if ok and type(v) == "number" then return v end
+	end
+	return fallback
+end
+
+-- If this id was already emitted by C2, don't override (chain priority)
+local __pi = r2_parent_info[num]
+if not (__pi and __pi.source == "C2") then
+    r2_parent_info[num].x = obj.getvalue("x") + obj.ox
+    r2_parent_info[num].y = obj.getvalue("y") + obj.oy
+    r2_parent_info[num].z = obj.getvalue("z") + obj.oz
+
+-- try multiple aliases for rotations
+local rx = pickprop({"rx","rot_x","rotation_x","rotx","angle_x","pitch","xangle","RotateX","RotationX"}, obj.rx or 0)
+local ry = pickprop({"ry","rot_y","rotation_y","roty","angle_y","yaw","yangle","RotateY","RotationY"}, obj.ry or 0)
+local rz = pickprop({"rz","rot_z","rotation_z","rotz","angle_z","roll","zangle","RotateZ","RotationZ","angle"}, obj.rz or 0)
+rz = pick({"rz","rot_z","rotation_z","rotz","angle_z","roll","zangle","RotateZ","RotationZ","angle"}, rz)
+rx = pick({"rx","rot_x","rotation_x","rotx","angle_x","pitch","xangle","RotateX","RotationX"}, rx)
+ry = pick({"ry","rot_y","rotation_y","roty","angle_y","yaw","yangle","RotateY","RotationY"}, ry)
+    r2_parent_info[num].rx = rx
+    r2_parent_info[num].ry = ry
+    r2_parent_info[num].rz = rz
+
+    r2_parent_info[num].zoom = obj.zoom * obj.getvalue("zoom") * 0.01
+    r2_parent_info[num].alpha = obj.alpha * obj.getvalue("alpha")
+    r2_parent_info[num].disp = obj.check0
+-- center pivot and aspect (AviUtl2) - prefer direct variables per official doc
+local cx = obj.cx or 0
+local cy = obj.cy or 0
+local cz = obj.cz or 0
+-- aspect: use base value via getvalue per official doc
+local aspect = obj.getvalue("aspect") or obj.aspect or 0
+    r2_parent_info[num].cx = cx
+    r2_parent_info[num].cy = cy
+    r2_parent_info[num].cz = cz
+    r2_parent_info[num].aspect = aspect
+    -- also store explicit non-uniform scale for downstream (sx/sy)
+    local function aspect_to_scale(a)
+        local sx, sy = 1.0, 1.0
+        if a and a > 0 then sx = math.max(0.0, 1.0 - a) elseif a and a < 0 then sy = math.max(0.0, 1.0 + a) end
+        return sx, sy
+    end
+    local psx, psy = aspect_to_scale(aspect)
+    r2_parent_info[num].sx = psx
+    r2_parent_info[num].sy = psy
+    r2_parent_info[num].source = "P2"
+end
+
+if obj.track1 == 1 then
+	obj.alpha = 0
+	obj.draw()
+end
+
+-- step2_fix: disable P2 debug drawing to avoid side-effects
+-- if obj.check0 then
+-- 	r2_P_C_DISP(num, "p")
+-- 	local dbg = string.format("[P2] id=%d cx=%.3f cy=%.3f cz=%.3f aspect=%.3f rx=%.2f ry=%.2f rz=%.2f", num, cx or 0, cy or 0, cz or 0, aspect or 0, rx or 0, ry or 0, rz or 0)
+-- 	pcall(debug_print, dbg)
+-- end
+
+
+@C2(Child)
+--track0:ParentId,1,100,1,1
+--track1:EmitParentId,0,100,0,1
+--check0:DebugDisp,0
+--check1:InheritCenter,1
+--check2:InheritAspect,1
+--check3:InheritRotation,1
+-- Child apply: applies parent transform to this object
+require("bokuju_parent_control2")
+
+-- local helpers (C2 context): define here because P2's locals are not shared
+local function getv_c(name)
+    local ok, v = pcall(obj.getvalue, name)
+    if ok and type(v) == "number" then return v end
+    return nil
+end
+local function pick_c(keys, fallback)
+    for i = 1, #keys do
+        local v = getv_c(keys[i])
+        if type(v) == "number" then return v end
+    end
+    return fallback
+end
+local function pickprop_c(props, fallback)
+    for i = 1, #props do
+        local ok, v = pcall(function() return obj[props[i]] end)
+        if ok and type(v) == "number" then return v end
+    end
+    return fallback
+end
+
+local info = r2_parent_info[math.ceil(obj.track0)] or r2_parent_info[0]
+
+local px = info.x or 0
+local py = info.y or 0
+local pz = info.z or 0
+local prx = info.rx or 0
+local pry = info.ry or 0
+local prz = info.rz or 0
+local pzoom = (info.zoom or 1)
+local palpha = (info.alpha or 1)
+local pcx = info.cx or 0
+local pcy = info.cy or 0
+local pcz = info.cz or 0
+local paspect = info.aspect or 0
+local psx = info.sx or 1
+local psy = info.sy or 1
+
+local gx = obj.getvalue("x")
+local gy = obj.getvalue("y")
+local gz = obj.getvalue("z")
+local lx = gx + obj.ox - pcx
+local ly = gy + obj.oy - pcy
+local lz = gz + obj.oz - pcz
+local dx = lx * pzoom
+local dy = ly * pzoom
+local dz = lz * pzoom
+-- aspect handling: parent aspect affects spatial offset; child aspect affects quad shape
+local function aspect_to_scale(a)
+    local sx, sy = 1.0, 1.0
+    if a and a > 0 then
+        sx = math.max(0.0, 1.0 - a)
+    elseif a and a < 0 then
+        sy = math.max(0.0, 1.0 + a)
+    end
+    return sx, sy
+end
+local caspect = getv_c("aspect") or obj.aspect or 0
+local eff_paspect = (obj.check2 and (paspect or 0)) or 0
+if obj.check2 and (info.sx or info.sy) then
+    psx = info.sx or psx
+    psy = info.sy or psy
+end
+local csx, csy = aspect_to_scale(caspect)
+local nsx, nsy = psx * csx, psy * csy
+
+-- approximate a single AviUtl2 aspect value from combined scales
+local function scale_to_aspect(nx, ny)
+    local dx = math.abs(1.0 - nx)
+    local dy = math.abs(1.0 - ny)
+    if dy < 1e-4 and dx > 1e-4 then
+        return 1.0 - nx -- positive: shrink X
+    elseif dx < 1e-4 and dy > 1e-4 then
+        return ny - 1.0 -- negative: shrink Y
+    else
+        if dx >= dy then
+            return 1.0 - nx
+        else
+            return ny - 1.0
+        end
+    end
+end
+local aeff = scale_to_aspect(nsx, nsy)
+
+-- apply only parent's aspect to spatial offset before rotation
+dx = dx * psx
+dy = dy * psy
+
+local pi_180 = math.pi / 180
+local rz = (prz or 0) * pi_180
+local ry = (pry or 0) * pi_180
+local rx = (prx or 0) * pi_180
+
+local cos = math.cos
+local sin = math.sin
+
+local c = cos(rz)
+local s = sin(rz)
+local x1 = dx * c - dy * s
+local y1 = dx * s + dy * c
+
+c = cos(ry)
+s = sin(ry)
+local z1 = dz * c - x1 * s
+
+-- include parent center shift (only when inheriting center)
+if obj.check1 then
+    obj.ox = -gx + (dz * s + x1 * c) + px + pcx
+else
+    obj.ox = -gx + (dz * s + x1 * c) + px
+end
+
+c = cos(rx)
+s = sin(rx)
+if obj.check1 then
+    obj.oy = -gy + (y1 * c - z1 * s) + py + pcy
+    obj.oz = -gz + (y1 * s + z1 * c) + pz + pcz
+else
+    obj.oy = -gy + (y1 * c - z1 * s) + py
+    obj.oz = -gz + (y1 * s + z1 * c) + pz
+end
+
+-- rotation composition. If solver not available, fallback to additive
+local comp_rx, comp_ry, comp_rz = obj.rx or 0, obj.ry or 0, obj.rz or 0
+do
+	local r1x, r1y, r1z
+	local composed = false
+	-- robustly read child's own rotation tracks
+	local crx = pickprop_c({"rx","rot_x","rotation_x","rotx","angle_x","pitch","xangle","RotateX","RotationX"}, obj.rx or 0)
+	local cry = pickprop_c({"ry","rot_y","rotation_y","roty","angle_y","yaw","yangle","RotateY","RotationY"}, obj.ry or 0)
+	local crz = pickprop_c({"rz","rot_z","rotation_z","rotz","angle_z","roll","zangle","RotateZ","RotationZ","angle"}, obj.rz or 0)
+	crx = pick_c({"rx","rot_x","rotation_x","rotx","angle_x","pitch","xangle","RotateX","RotationX"}, crx)
+	cry = pick_c({"ry","rot_y","rotation_y","roty","angle_y","yaw","yangle","RotateY","RotationY"}, cry)
+	crz = pick_c({"rz","rot_z","rotation_z","rotz","angle_z","roll","zangle","RotateZ","RotationZ","angle"}, crz)
+	if r2_P_C_ROTATION then
+		local ok, a, b, c = pcall(r2_P_C_ROTATION, crx or 0, cry or 0, crz or 0, prx, pry, prz)
+		if ok and type(a) == "number" and type(b) == "number" and type(c) == "number" then
+			r1x, r1y, r1z = a, b, c
+			composed = true
+		end
+	end
+	if not composed then
+		r1x = (crx or obj.rx or 0) + prx
+		r1y = (cry or obj.ry or 0) + pry
+		r1z = (crz or obj.rz or 0) + prz
+	end
+	comp_rx, comp_ry, comp_rz = r1x, r1y, r1z
+	-- attempt to set rotation using multiple aliases for AviUtl2
+	local function setfirst(fields, value)
+		for i = 1, #fields do
+			local ok = pcall(function() obj[fields[i]] = value end)
+			if ok then return true end
+		end
+		return false
+	end
+	-- To avoid double applying child's own track, set delta = composed - childTrack
+	local drx = (r1x or 0) - (crx or obj.rx or 0)
+	local dry = (r1y or 0) - (cry or obj.ry or 0)
+	local drz = (r1z or 0) - (crz or obj.rz or 0)
+	if not setfirst({"rx","rot_x","rotation_x","rotx"}, drx) then obj.rx = drx end
+	if not setfirst({"ry","rot_y","rotation_y","roty"}, dry) then obj.ry = dry end
+	if not setfirst({"rz","rot_z","rotation_z","rotz"}, drz) then obj.rz = drz end
+end
+
+-- Compose zoom (split):
+--   base_zoom = child's property * child's track
+--   combined_zoom = base_zoom * parent zoom
+local track_zoom = (obj.getvalue("zoom") or 100) * 0.01
+local base_zoom = (obj.zoom or 1) * track_zoom
+local combined_zoom = base_zoom * (pzoom or 1)
+-- Use base_zoom for the object itself; parent zoom is applied in drawpoly geometry
+obj.zoom = base_zoom
+obj.alpha = obj.alpha * palpha
+
+-- try to write center (pivot) and aspect into child if engine supports it
+local function setfirst(fields, value)
+	for i = 1, #fields do
+		local ok = pcall(function() obj[fields[i]] = value end)
+		if ok then return true end
+	end
+	return false
+end
+if obj.check1 then
+    setfirst({"cx","center_x","centerX","pivot_x","pivotX"}, pcx)
+    setfirst({"cy","center_y","centerY","pivot_y","pivotY"}, pcy)
+    setfirst({"cz","center_z","centerZ","pivot_z","pivotZ"}, pcz)
+end
+if obj.check2 then
+    setfirst({"aspect"}, paspect)
+end
+
+-- step2_fix: disable C2 debug drawing to avoid side-effects
+-- if info.disp and obj.check0 then
+-- 	r2_P_C_DISP(math.ceil(obj.track0), "c")
+-- 	local dbg = string.format("[C2] pid=%d pcx=%.3f pcy=%.3f pcz=%.3f paspect=%.3f -> ox=%.3f oy=%.3f oz=%.3f rx=%.2f ry=%.2f rz=%.2f", math.ceil(obj.track0), pcx or 0, pcy or 0, pcz or 0, paspect or 0, obj.ox or 0, obj.oy or 0, obj.oz or 0, obj.rx or 0, obj.ry or 0, obj.rz or 0)
+-- 	pcall(debug_print, dbg)
+-- end
+
+-- If aspect inheritance is on, draw a deformed quad to visually match parent's aspect
+do
+	local need_drawpoly = false
+	if obj.check3 then need_drawpoly = true end
+	-- drawpoly when any aspect deformation exists (parent effective or child own)
+	if (math.abs(eff_paspect or 0) > 0.0001) or (math.abs(caspect or 0) > 0.0001) then need_drawpoly = true end
+	-- also draw when parent zoom differs from 1 to ensure visual scale inheritance
+	if math.abs((pzoom or 1) - 1.0) > 0.0001 then need_drawpoly = true end
+	if need_drawpoly then
+		local w = obj.w or 100
+		local h = obj.h or 100
+		local hx = 0.5 * w * (pzoom or 1) * nsx
+		local hy = 0.5 * h * (pzoom or 1) * nsy
+		-- Do not pre-rotate vertices; use engine's obj.rx/ry/rz (already composed)
+		local x0, y0, z0 = -hx, -hy, 0
+		local x1, y1, z1 =  hx, -hy, 0
+		local x2, y2, z2 =  hx,  hy, 0
+		local x3, y3, z3 = -hx,  hy, 0
+		obj.setoption("sampler", "clamp")
+		obj.drawpoly(x0, y0, z0,  x1, y1, z1,  x2, y2, z2,  x3, y3, z3,  0, 0,  w, 0,  w, h,  0, h)
+		obj.setoption("draw_state", true)
+	end
+end
+
+-- chain emit: register this child's final transform as a parent for others
+do
+	local emit = math.floor(obj.track1 or 0)
+	if emit and emit > 0 and emit <= 100 then
+		local k = emit
+		r2_parent_info[k].x = obj.ox + gx
+		r2_parent_info[k].y = obj.oy + gy
+		r2_parent_info[k].z = obj.oz + gz
+		r2_parent_info[k].rx = comp_rx or obj.rx
+		r2_parent_info[k].ry = comp_ry or obj.ry
+		r2_parent_info[k].rz = comp_rz or obj.rz
+		-- register final zoom directly for chaining
+		r2_parent_info[k].zoom = combined_zoom
+		r2_parent_info[k].alpha = obj.alpha * obj.getvalue("alpha")
+		r2_parent_info[k].aspect = aeff or 0
+		-- center chainingは未実装のため0
+		r2_parent_info[k].cx = 0
+		r2_parent_info[k].cy = 0
+		r2_parent_info[k].cz = 0
+		-- pass through non-uniform scales for aspect chaining
+		r2_parent_info[k].sx = nsx or 1
+		r2_parent_info[k].sy = nsy or 1
+		r2_parent_info[k].disp = obj.check0
+		r2_parent_info[k].source = "C2"
+		if obj.check0 then
+			local dbg = string.format("[EMIT] id=%d x=%.3f y=%.3f z=%.3f rx=%.2f ry=%.2f rz=%.2f zoom=%.3f alpha=%.3f aspect=%.3f sx=%.3f sy=%.3f", k, r2_parent_info[k].x or 0, r2_parent_info[k].y or 0, r2_parent_info[k].z or 0, r2_parent_info[k].rx or 0, r2_parent_info[k].ry or 0, r2_parent_info[k].rz or 0, r2_parent_info[k].zoom or 1, r2_parent_info[k].alpha or 1, r2_parent_info[k].aspect or 0, r2_parent_info[k].sx or 1, r2_parent_info[k].sy or 1)
+			pcall(debug_print, dbg)
+		end
+	end
+end
+
+
